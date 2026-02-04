@@ -27,7 +27,7 @@ public class Main {
         KafkaSource<String> kafkaSource = KafkaSource.<String>builder()
                 .setBootstrapServers("localhost:9091")
                 .setGroupId("tuan-1")
-                .setTopics("my_topic")
+                .setTopics("topic_string")
                 .setValueOnlyDeserializer(new SimpleStringSchema())
                 .build();
         DataStream<String> dataStream = env.fromSource(
@@ -36,23 +36,28 @@ public class Main {
             "kafka-source"
         );
 
+        String s3Endpoint = "http://localhost:9000";
+        String s3AccessKey = "";
+        String s3SecretKey = "";
+
         Map<String, String> catalogOptions = new HashMap<>();
-        catalogOptions.put("type", "hive");
+        catalogOptions.put("type", "iceberg");
         catalogOptions.put("catalog-type", "hive");
-        catalogOptions.put("uri", "localhost:9083");
+        catalogOptions.put("uri", "thrift://localhost:9083");
 //        catalogOptions.put("ref", nessieCatalog.getProperty("ref"));
         catalogOptions.put("warehouse", "s3a://teko-datawarehouse/.warehouse/");
-        catalogOptions.put("s3.endpoint", "");
-        catalogOptions.put("s3.aws-access-key", "");
-        catalogOptions.put("s3.aws-secret-key", "");
+        catalogOptions.put("s3.endpoint", s3Endpoint);
+        catalogOptions.put("s3.aws-access-key", s3AccessKey);
+        catalogOptions.put("s3.aws-secret-key", s3SecretKey);
+        catalogOptions.put("client.assume-role.region", "us-east-1");
         catalogOptions.put("s3.path-style-access", "true");
         catalogOptions.put("fs.native-s3.enabled", "true");
         catalogOptions.put("io-impl", "org.apache.iceberg.aws.s3.S3FileIO");
 
         Configuration hadopConf = new Configuration();
-        hadopConf.set("fs.s3a.access.key", "");
-        hadopConf.set("fs.s3a.secret.key", "");
-        hadopConf.set("fs.s3a.endpoint", "");
+        hadopConf.set("fs.s3a.access.key", s3AccessKey);
+        hadopConf.set("fs.s3a.secret.key", s3SecretKey);
+        hadopConf.set("fs.s3a.endpoint", s3Endpoint);
         hadopConf.set("fs.s3a.path.style.access", "true");
         hadopConf.set("fs.native-s3.enabled", "true");
 
@@ -61,15 +66,15 @@ public class Main {
         CatalogLoader catalogLoader = CatalogLoader.hive("teko_datawarehouse", hadopConf, catalogOptions);
 
         // Iceberg Table Setting
-        TableLoader tableLoader = TableLoader.fromCatalog(catalogLoader, TableIdentifier.of("test_geo", "tuan_dz"));
+        TableLoader tableLoader = TableLoader.fromCatalog(catalogLoader, TableIdentifier.of("test_geo", "tuan_dz_str"));
 
-//        DataStream<RowData> rowDataDataStream = dataStream.map(new RawStringToRowDataMapper());
+        DataStream<RowData> rowDataDataStream = dataStream.map(new RawStringToRowDataMapper());
 //        RowData r = new GenericRowData(1);
 
-//        FlinkSink.forRowData(input)
-//                .tableLoader(tableLoader)
-//                .upsert(true)
-//                .append();
+        FlinkSink.forRowData(rowDataDataStream)
+                .tableLoader(tableLoader)
+                .upsert(true)
+                .append();
 //        dataStream.print();
 
         env.execute("tuan-kafka-app");
