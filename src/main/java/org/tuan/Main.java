@@ -5,6 +5,7 @@ import org.apache.flink.api.common.serialization.SimpleStringSchema;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
 import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.CheckpointConfig;
 import org.apache.flink.table.data.GenericRowData;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -24,10 +25,17 @@ public class Main {
     public static void main(String[] args) throws Exception {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
+        env.enableCheckpointing(10000);
+        env.getCheckpointConfig().setMinPauseBetweenCheckpoints(500);
+        env.getCheckpointConfig().setCheckpointTimeout(10000);
+        env.getCheckpointConfig().setTolerableCheckpointFailureNumber(2);
+        env.getCheckpointConfig().setMaxConcurrentCheckpoints(1);
+
         KafkaSource<String> kafkaSource = KafkaSource.<String>builder()
-                .setBootstrapServers("localhost:9091")
-                .setGroupId("tuan-1")
-                .setTopics("topic_string")
+                .setBootstrapServers("databus-kafka-bootstrap.kafka.svc:9092")
+                .setGroupId("tuan-test-2")
+                .setTopics("tuan_test_topic_string")
+                .setStartingOffsets(OffsetsInitializer.earliest())
                 .setValueOnlyDeserializer(new SimpleStringSchema())
                 .build();
         DataStream<String> dataStream = env.fromSource(
@@ -36,23 +44,23 @@ public class Main {
             "kafka-source"
         );
 
-        String s3Endpoint = "http://localhost:9000";
+        String s3Endpoint = "";
         String s3AccessKey = "";
         String s3SecretKey = "";
 
         Map<String, String> catalogOptions = new HashMap<>();
         catalogOptions.put("type", "iceberg");
         catalogOptions.put("catalog-type", "hive");
-        catalogOptions.put("uri", "thrift://localhost:9083");
-//        catalogOptions.put("ref", nessieCatalog.getProperty("ref"));
-        catalogOptions.put("warehouse", "s3a://teko-datawarehouse/.warehouse/");
+        catalogOptions.put("uri", "thrift://datawarehouse-metastore.hive.svc:9083");
+        catalogOptions.put("warehouse", "s3a://datawarehouse/iceberg/.warehouse/");
         catalogOptions.put("s3.endpoint", s3Endpoint);
-        catalogOptions.put("s3.aws-access-key", s3AccessKey);
-        catalogOptions.put("s3.aws-secret-key", s3SecretKey);
-        catalogOptions.put("client.assume-role.region", "us-east-1");
+        catalogOptions.put("s3.access-key-id", s3AccessKey);
+        catalogOptions.put("s3.secret-access-key", s3SecretKey);
+        catalogOptions.put("s3.region", "aws-global");
         catalogOptions.put("s3.path-style-access", "true");
         catalogOptions.put("fs.native-s3.enabled", "true");
         catalogOptions.put("io-impl", "org.apache.iceberg.aws.s3.S3FileIO");
+        catalogOptions.put("catalog-impl", "org.apache.iceberg.hive.HiveCatalog");
 
         Configuration hadopConf = new Configuration();
         hadopConf.set("fs.s3a.access.key", s3AccessKey);
@@ -60,22 +68,16 @@ public class Main {
         hadopConf.set("fs.s3a.endpoint", s3Endpoint);
         hadopConf.set("fs.s3a.path.style.access", "true");
         hadopConf.set("fs.native-s3.enabled", "true");
+//        hadopConf.set("fs.s3a.aws.credentials.provider", "org.apache.flink.fs.s3.common.token.DynamicTemporaryAWSCredentialsProvider");
 
-
-        // Iceberg Catalog Definition
-        CatalogLoader catalogLoader = CatalogLoader.hive("teko_datawarehouse", hadopConf, catalogOptions);
-
-        // Iceberg Table Setting
+        dataStream.print();
+        CatalogLoader catalogLoader = CatalogLoader.hive("datawarehouse", hadopConf, catalogOptions);
         TableLoader tableLoader = TableLoader.fromCatalog(catalogLoader, TableIdentifier.of("test_geo", "tuan_dz_str"));
-
         DataStream<RowData> rowDataDataStream = dataStream.map(new RawStringToRowDataMapper());
-//        RowData r = new GenericRowData(1);
 
         FlinkSink.forRowData(rowDataDataStream)
                 .tableLoader(tableLoader)
-                .upsert(true)
                 .append();
-//        dataStream.print();
 
         env.execute("tuan-kafka-app");
     }
